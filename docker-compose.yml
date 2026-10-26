@@ -1,0 +1,98 @@
+name: codeforge
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-codeforge}:${POSTGRES_PASSWORD:-codeforge}@postgres:5432/${POSTGRES_DB:-codeforge}
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-secret-change-me}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  RATE_LIMIT_SUBMIT: ${RATE_LIMIT_SUBMIT:-10/60}
+  RATE_LIMIT_RUN: ${RATE_LIMIT_RUN:-20/60}
+  RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-10/60}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-codeforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-codeforge}
+      POSTGRES_DB: ${POSTGRES_DB:-codeforge}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # AOF persistence: queued jobs survive a Redis restart (the sweeper covers the rest).
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Builds the sandbox image used for every submission, then exits.
+  sandbox:
+    build: ./infrastructure/sandbox
+    image: codeforge-sandbox:latest
+    command: ["true"]
+    network_mode: none
+    restart: "no"
+
+  migrate:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    image: codeforge-api:latest
+    environment:
+      <<: *backend-env
+      CODEFORGE_ADMIN_PASSWORD: ${CODEFORGE_ADMIN_PASSWORD:-}
+    command: ["sh", "-c", "alembic upgrade head && python -m codeforge_api.seed"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    image: codeforge-api:latest
+    environment: *backend-env
+    ports: ["${API_PORT:-8000}:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  worker:
+    build: { context: ., dockerfile: apps/worker/Dockerfile }
+    image: codeforge-worker:latest
+    environment:
+      <<: *backend-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      SANDBOX_IMAGE: codeforge-sandbox:latest
+    volumes:
+      # The worker (trusted) controls sibling sandbox containers through the host daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      sandbox: { condition: service_completed_successfully }
+    stop_grace_period: 60s   # drain in-flight jobs on shutdown
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    image: codeforge-web:latest
+    ports: ["${WEB_PORT:-3000}:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

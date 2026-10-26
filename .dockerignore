@@ -1,0 +1,10 @@
+**/node_modules
+**/.next
+**/__pycache__
+**/*.egg-info
+**/.pytest_cache
+apps/web
+.git
+.env
+docs
+tests
