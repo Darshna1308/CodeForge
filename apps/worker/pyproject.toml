@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codeforge-worker"
+version = "1.0.0"
+description = "CodeForge execution worker: queue consumer, sandbox driver, judge"
+requires-python = ">=3.11"
+dependencies = ["codeforge-core", "prometheus-client>=0.20"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["codeforge_worker*"]
