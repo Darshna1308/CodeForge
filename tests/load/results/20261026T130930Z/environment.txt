@@ -1,0 +1,7 @@
+timestamp_utc: 20261026T130930Z
+target: http://localhost:8000
+users: 40  spawn_rate: 10/s  duration: 90s
+host: Linux 6.18.44-fc-v153 x86_64
+cpus: 4
+memory: 15Gi
+workers_online: 3
